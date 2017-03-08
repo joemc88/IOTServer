@@ -6,9 +6,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.mongodb.*;	
 //import java.util.ArrayList;
 //import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
-import org.json.simple.parser.ParseException;
+//import org.json.simple.JSONObject;
+//import org.json.simple.parser.JSONParser;
+//import org.json.simple.parser.ParseException;
 
 @RestController
 public class GreetingController {
@@ -24,7 +24,7 @@ public class GreetingController {
     	@RequestParam(value="services", defaultValue="none") String[] services){ //what can you see
     	
     	String futureServices[] = {"Uncharted","territory","cannot","make","predictions"};
-    	System.out.println("beginning try block");
+    	
     	//Put in DB stuff here
     	try{
     		MongoClient mongoClient = new MongoClient("localhost", 27017);
@@ -40,68 +40,102 @@ public class GreetingController {
     		 * */
     		
     		BasicDBObject updateCurrentsFuture = new BasicDBObject();
+    		DBObject currentContext =  contexts.findOne( new BasicDBObject().append("CID", users.findOne(new BasicDBObject().append("UID",uid)).get("currentContext")));
+
     		
-    		//Second we check if the new data corresponds to an existing record
-    		System.out.println("finding entry for recieved context");
+    		//Get adjacency List and weights of current context
+    		Object[] currentAdjacencyObj = ((BasicDBList)currentContext.get("adjacencyList")).toArray();
+    		Object[] currentWeightsObj = ((BasicDBList) currentContext.get("weights")).toArray();
+  	      	int[] currentAdjacency = new int[currentAdjacencyObj.length];
+  	        double[] currentWeights = new double[currentWeightsObj.length];
+
+  	        for(int i=0; i < currentWeightsObj.length; i++){
+  	        	currentAdjacency[i] = (int) currentAdjacencyObj[i];
+  	        	currentWeights[i] = Double.valueOf(currentWeightsObj[i].toString());
+  	        }
+    		
+  	          
+  	        //Second we check if the new data corresponds to an existing record
     		DBObject CIDofNewCurrent = contexts.findOne(new BasicDBObject("services", services)
-    				//.append("day", day)
+    				.append("day", day)
     				.append("hour",hour), new BasicDBObject("CID", 1));
-    		System.out.println("search completed");
     		
     		//if not we create one with CID (context id) set to one above the last greatest id
     		if(CIDofNewCurrent == null){
-    			System.out.println("no entry found creating a new one");
     			greatestCID++;
     			BasicDBObject newContext = new BasicDBObject("CID", greatestCID)
     	        		.append("services",services)
     	        		.append("day", day)
         				.append("hour",hour)
-    	     	       . append("nextContext", 1);   
+        				.append("adjacencyList", new int[]{1,0,0,0,0})
+     	     	        .append("weights",new double[]{1.0,0.0,0.0,0.0,0.0});   
     	        contexts.insert(newContext);
-
-    	        updateCurrentsFuture.append("$set", new BasicDBObject().append("nextContext", greatestCID));
+    	
+    	        //find the index in current adjacency list to replace. It will be the one with the lowest weight, i.e the least used one.
+    	        int replaceIndex = 0;
+    	        double lowestWeight  =1;
+    	        for(int i = 0; i< currentAdjacency.length; i++){
+    	        	if(currentWeights[i]< lowestWeight){
+    	        		lowestWeight = currentWeights[i];
+    	        		replaceIndex = i;
+    	        	}
+    	        }
+    	        currentAdjacency[replaceIndex] = greatestCID;
+    	        
+    	        //create query object to replace currents adjacency list and weights with updated version
+    	        double[] redistribution = redistributeWeights(greatestCID, currentAdjacency, currentWeights);
+    	        updateCurrentsFuture.append("$set", new BasicDBObject().append("weights", redistribution).append("adjacencyList", currentAdjacency));
     	        latestCID = greatestCID;
     	        
     		}else{
-    			System.out.println("entry found point last context to it");
-    			System.out.println(CIDofNewCurrent.get("CID"));
-    			latestCID =  (int) CIDofNewCurrent.get("CID");
-    			updateCurrentsFuture.append("$set", new BasicDBObject().append("nextContext", latestCID));
+    			//if received context does exist, we'll use it's CID
+    			latestCID =  (int) CIDofNewCurrent.get("CID");			
     			
-    			System.out.println("cid of new current used without problems");
+    			//update weights here
+    			 double[] redistribution = redistributeWeights(latestCID, currentAdjacency, currentWeights);
+     	        updateCurrentsFuture.append("$set", new BasicDBObject().append("weights", redistribution).append("adjacencyList", currentAdjacency));
+    	
     		}   			
-    		//Thirdly we get the record corresponding to the last context and update where it points to the new one 
-    		System.out.println("updating where last context pointed");
+    		
+    		//Thirdly we get the context the user points to and point IT at the newly found/created context
     		BasicDBObject contextPointUpdateQuery = new BasicDBObject()
-    				.append("CID", users.findOne().get("currentContext"));
+    				.append("CID", users.findOne(new BasicDBObject().append("UID",uid)).get("currentContext"));
 
     		contexts.update(contextPointUpdateQuery, updateCurrentsFuture);
     		
     		//Fourth we change the value of the users current context to point to the latest data 
-    		System.out.println("updating users context");
-    		System.out.print("with value ");
-    		//System.out.println(CIDofNewCurrent.get("CID"));
-    		System.out.print("thats the value above");
     		BasicDBObject updateUsersCurrent = new BasicDBObject().append("$set",new BasicDBObject().append("currentContext",latestCID));
     		
     		BasicDBObject userContextUpdateQuery = new BasicDBObject().append("UID", uid);
     		users.update(userContextUpdateQuery, updateUsersCurrent );
     		
     		//finally return the services of the new currents future
-    		//System.out.println(" after status:"+users.findOne());
-    		System.out.println("finding out the future");
-    		int usersCurrentContextID  = (int) users.findOne().get("currentContext");
-    		DBObject nextContextAfterCurrent =  contexts.findOne(new BasicDBObject("CID", usersCurrentContextID), new BasicDBObject("nextContext", 1));
-
-    		DBObject arrayResults = contexts.findOne(new BasicDBObject("CID", nextContextAfterCurrent.get("nextContext")), new BasicDBObject("services", 1));
+    		//this must return the CID that corresponds to the largest weight on the current contexts adjacency list
+    		int usersCurrentContextID  = (int) users.findOne(new BasicDBObject().append("UID",uid)).get("currentContext");
+    		DBObject nextContextAfterCurrent =  contexts.findOne(new BasicDBObject("CID", usersCurrentContextID), new BasicDBObject("adjacencyList", 1).append("weights",1));
+    		Object[] possibleFutureContexts =((BasicDBList) nextContextAfterCurrent.get("weights")).toArray();
+    		
+    		//find index of adjacency list with greatest corresponding weight
+    		int winnerIndex = 0;
+    		double largestWeight = 0;
+    		for(int i = 0; i< possibleFutureContexts.length;i++){
+    			if(( Double.valueOf(possibleFutureContexts[i].toString()))> largestWeight){
+    				winnerIndex = i;
+    				largestWeight = Double.valueOf(possibleFutureContexts[i].toString());
+    			}
+    		}
+    		Object[] adj = ((BasicDBList) nextContextAfterCurrent.get("adjacencyList")).toArray();
+    		int predictionCID  =(int) adj[winnerIndex];
+    		
+    		DBObject arrayResults = contexts.findOne(new BasicDBObject("CID",predictionCID), new BasicDBObject("services", 1));
     		//TODO if context has no services continue through linked list until one with services is found
-    		System.out.println("getting array from the future");
+
     		BasicDBList serv = (BasicDBList) arrayResults.get("services");
-   
     		Object[] servArr = serv.toArray();
     		int i = 0;
     		for(Object dbObj : servArr) {
     			futureServices[i] = dbObj.toString();
+    			System.out.println(dbObj.toString());
     			i++;
     		  }
     		mongoClient.close();
@@ -126,14 +160,18 @@ public class GreetingController {
 	        DB db = mongoClient.getDB( "test" );
 	        db.dropDatabase();
 	        db = mongoClient.getDB( "test" );
-	        System.out.println("Connect to database successfully");
+	        System.out.println("Connected to database successfully");
 				
 	        DBCollection contexts = db.createCollection("contexts", null);
-	        System.out.println("context Collection created successfully");
 	        
 	        DBCollection users = db.createCollection("users", null);
-	        System.out.println("user Collection created successfully");
+	        //TODO create a new feature. add a cell to user object to keep track of greatestCID
+	        //add cell to user to track recurring sets of services detected across multiple contexts.
+	        //create new collection for macros. 
+	        //if a newly created context has the same services as the previous one it will point to the same macro, contexts must keep a list of macros to allow user defined ones
+	        //each macro is a list of tuples. <service, time>
 	        
+	        //add endpoint to handle when a service is used. it must add it to 
 	        BasicDBObject doc = new BasicDBObject("UID", 1).
 	        		append("Email", "joesph.joemc.mcevoy@gmail.com").
 	     	        append("currentContext", 1);
@@ -141,12 +179,14 @@ public class GreetingController {
 	        users.insert(doc);
 	        System.out.println("Document inserted successfully");
 	        String[] services = {"Undefined","Undefined","Undefined","Undefined","Undefined"};
-	
+	        int[] adjacencyList = {1,0,0,0,0};
+	       double[] weights= {1.0,0.0,0.0,0.0,0.0};
 	        BasicDBObject baseContext = new BasicDBObject("CID", 1).
 	        		append("day",0).
 	        		append("hour",0).
 	        		append("services",services).
-	     	        append("nextContext", 1);
+	     	        append("adjacencyList", adjacencyList).
+	     	        append("weights",weights);
 	        
 	        contexts.insert(baseContext);
 	        DBCursor cursor = contexts.find();
@@ -162,4 +202,20 @@ public class GreetingController {
     	}
     	return retVal;
     } 
+    //method to redistribute the weights 
+    private double[] redistributeWeights(int usedCID, int[] adjacencyList, double[] weights){
+    	double alpha = weights.length;
+    	for(int i=0; i< adjacencyList.length;i++){
+    		if(adjacencyList[i] != usedCID&& adjacencyList[i]>(1.0/alpha)/(alpha-1.0)){
+    			weights[i] -= (1.0/alpha)/(alpha-1.0);
+    			System.out.println("weight lowered by: "+((1.0/alpha)/(alpha-1.0)));
+    		}else{
+    			if(weights[i]<=1-(1.0/alpha)){
+    				weights[i] += 1.0/alpha;
+    				System.out.println("weight increased by:"+(1.0/alpha));
+    			}
+    		}
+    	}
+    	return weights;
+    }
 }
