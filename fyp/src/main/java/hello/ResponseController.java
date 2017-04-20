@@ -9,14 +9,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.mongodb.*;	
-//import java.util.ArrayList;
-//import org.json.simple.JSONArray;
-//import org.json.simple.JSONObject;
-//import org.json.simple.parser.JSONParser;
-//import org.json.simple.parser.ParseException;
+
 
 @RestController
 public class ResponseController {
+	  
+	
 	//TODO initialise these properly to they recieve their values from the DB, otherwise the server will start from scratch each reboot
 	private int greatestCID = 1;
 	//private int greatestUID = 1;
@@ -33,7 +31,7 @@ public class ResponseController {
     	@RequestParam(value="services", defaultValue="none") String[] services){ //what can you see
     	
     	String futureServices[] = {"Uncharted","territory","cannot","make","predictions"};
-    
+    	long startTime = System.currentTimeMillis();
     	//Put in DB stuff here
     	try{
     		MongoClient mongoClient = new MongoClient("localhost", 27017);
@@ -188,19 +186,32 @@ public class ResponseController {
     	}catch(Exception e){
     		System.out.println(e);
     	}
-    	
+    	long endTime = System.currentTimeMillis();
+    	System.out.println("Started "+startTime);
+    	System.out.println("Ended "+endTime);
+    	System.out.println("Execution Time="+(endTime-startTime));
     	return new Response(uid,retArray);
     	
     }
     
+    @RequestMapping("/SpringDemo")
+    public Response blah(){
+    	String futureServices[] = {"Placeholder Value 1",
+    			"Placeholder Value 2",
+    			"Placeholder Value 3",
+    			"Placeholder Value 4"
+    			,"Placeholder Value 5"};
+    	return new Response(1,futureServices);
+    }
+    
+    
     //simple method to check connection
-    @RequestMapping("/share")
-    public String[] confirm(){
-    	String a[] = {"value1","value2"};
-    	return a;
+    @RequestMapping("/test")
+    public boolean test(){
+    	return true;
     }   
     //method to reset db after changes for testing
-    @RequestMapping("/initialise")
+    @RequestMapping("/reinitialise")
     public String initiaise(){
     	String retVal ="";
     	try{
@@ -269,23 +280,20 @@ public class ResponseController {
     	}catch(Exception e){
     		retVal = "initialisation failed "+e;
     	}
+    	
     	return retVal;
     } 
     //method to redistribute the weights 
+    
     private double[] redistributeWeights(int usedCID, int[] adjacencyList, double[] weights){
-    	double alpha = weights.length;
-    	System.out.println("Attempting weight distribition");
-    	
+    	double alpha = weights.length;  	
     	double tempWeight =-1;
     	int tempAdj =-1;
     	int tempIndex = -1;
+    	//increase used edge, decrease unused edges
     	for(int i=0; i< adjacencyList.length;i++){
-    			System.out.println("checking"+adjacencyList[i]+" against "+usedCID);
     		if(adjacencyList[i] == usedCID){
-    		
-    			System.out.println("increasing value");
     			weights[i] += 1.0/alpha;
-    			System.out.println(weights[i]);
     			if(weights[i]>=1){
     				weights[i] =0.999;
     			}
@@ -299,19 +307,16 @@ public class ResponseController {
     			}
     		}
     	}
+    	//reorder weights and adjacency
     	if(tempAdj!= -1){
     		weights[tempIndex] = weights[weights.length-1];
     		adjacencyList[tempIndex] = adjacencyList[adjacencyList.length-1];
     		weights[weights.length-1] = tempWeight;
     		adjacencyList[adjacencyList.length-1] = tempAdj;
     	}
-    	for(double x: weights){
-    		System.out.println("weights after distribution");
-    		System.out.println(x);
-    		
-    	}
     	return weights;
     }
+    
     @RequestMapping("/editMacro")
     public int editMacro(@RequestParam(value="uid", defaultValue="0000") int uid,
     					 @RequestParam(value="mid", defaultValue="0000") int mid,
@@ -359,7 +364,9 @@ public class ResponseController {
 		DBCollection macros = db.getCollection("macros");
 		DBCollection users = db.getCollection("users");
 		
-		DBObject user =  users.findOne( new BasicDBObject().append("UID",uid));  //.get("currentContext");
+		DBObject user =  users.findOne( new BasicDBObject().append("UID",uid)); 
+		
+		
 		int maxMID = (int) user.get("maxMID");
 		BasicDBObject updateUsersCurrent = new BasicDBObject().append("$set",new BasicDBObject().append("maxMID",++maxMID));
 		BasicDBObject userContextUpdateQuery = new BasicDBObject().append("UID", uid);
